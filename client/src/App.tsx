@@ -20,7 +20,9 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!loading && user && page === "login") setPage("lobby")
+    if (loading) return
+    if (!user) setPage("login")
+    else if (page === "login") setPage("lobby")
   }, [user, loading])
 
   useEffect(() => {

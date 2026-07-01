@@ -5,6 +5,7 @@ import { prisma } from "../config/database"
 
 const activeGames = new Map<string, GameService>()
 const playerGames = new Map<string, string>()
+const disconnectTimers = new Map<string, NodeJS.Timeout>()
 
 const ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
@@ -17,13 +18,81 @@ function generateRoomCode(): string {
 }
 
 function getUserId(socket: Socket): string {
-  return (socket.data.auth?.userId || socket.data.auth?.guestId || socket.id)
+  return socket.data.auth?.userId || socket.data.auth?.guestId || socket.id
+}
+
+function getOpponentId(game: GameService, userId: string): string {
+  return userId === game.whiteId ? game.blackId : game.whiteId
+}
+
+function findOpponentSocket(io: Server, game: GameService, userId: string): Socket | undefined {
+  const opponentId = getOpponentId(game, userId)
+  return [...io.sockets.sockets.values()].find((s) => getUserId(s) === opponentId)
+}
+
+async function cleanupGame(io: Server, gameId: string, result?: string, reason?: string) {
+  const game = activeGames.get(gameId)
+  if (!game) return
+
+  if (result && reason) {
+    const statusMap: Record<string, string> = {
+      "1-0": "WHITE_WIN",
+      "0-1": "BLACK_WIN",
+      "½-½": "DRAW",
+    }
+    game.status = statusMap[result] || "DRAW"
+
+    await prisma.game.update({
+      where: { id: gameId },
+      data: {
+        status: game.status as any,
+        pgn: game.pgn,
+        result,
+        finishedAt: new Date(),
+      },
+    }).catch(() => {})
+
+    const payload = { gameId, result, reason, pgn: game.pgn }
+    io.to(gameId).emit("game:over", payload)
+  }
+
+  const timer = disconnectTimers.get(game.whiteId)
+  if (timer) { clearTimeout(timer); disconnectTimers.delete(game.whiteId) }
+  const timer2 = disconnectTimers.get(game.blackId)
+  if (timer2) { clearTimeout(timer2); disconnectTimers.delete(game.blackId) }
+
+  io.socketsLeave(gameId)
+  activeGames.delete(gameId)
+  playerGames.delete(game.whiteId)
+  playerGames.delete(game.blackId)
 }
 
 export function registerGameHandlers(io: Server) {
   io.on("connection", (socket) => {
     const userId = getUserId(socket)
     console.log(`Socket connected: ${socket.id} (user: ${userId})`)
+
+    const activeGameId = playerGames.get(userId)
+    if (activeGameId) {
+      const game = activeGames.get(activeGameId)
+      if (game && game.status === "ACTIVE") {
+        socket.join(activeGameId)
+        const timer = disconnectTimers.get(userId)
+        if (timer) { clearTimeout(timer); disconnectTimers.delete(userId) }
+        const color = userId === game.whiteId ? "white" : "black"
+        socket.emit("game:start", {
+          gameId: activeGameId,
+          fen: game.fen,
+          clock: game.clock,
+          timeControl: game.timeControl,
+          color,
+          resumed: true,
+        })
+        const opponentSocket = findOpponentSocket(io, game, userId)
+        opponentSocket?.emit("game:opponent-reconnected")
+        console.log(`User ${userId} reconnected to game ${activeGameId}`)
+      }
+    }
 
     socket.on("matchmaking:join", async ({ timeControl }) => {
       const rating = socket.data.auth?.type === "user" ? 1200 : 1000
@@ -42,7 +111,11 @@ export function registerGameHandlers(io: Server) {
       const match = await findMatch(socket.id, timeControl, rating)
       if (match) {
         const opponentSocket = io.sockets.sockets.get(match.socketId)
-        if (!opponentSocket) return
+        if (!opponentSocket) {
+          await leaveQueue(socket.id)
+          await joinQueue({ socketId: socket.id, userId, rating, timeControl, joinedAt: Date.now() })
+          return
+        }
 
         const game = await prisma.game.create({
           data: {
@@ -59,6 +132,9 @@ export function registerGameHandlers(io: Server) {
         playerGames.set(userId, game.id)
         playerGames.set(match.userId, game.id)
 
+        socket.join(game.id)
+        opponentSocket.join(game.id)
+
         socket.emit("matchmaking:found", {
           gameId: game.id,
           opponent: { id: match.userId, nickname: "Oponente" },
@@ -74,19 +150,11 @@ export function registerGameHandlers(io: Server) {
         })
 
         socket.emit("game:start", {
-          gameId: game.id,
-          fen: gameService.fen,
-          clock: gameService.clock,
-          timeControl,
-          color: "white",
+          gameId: game.id, fen: gameService.fen, clock: gameService.clock, timeControl, color: "white",
         })
 
         opponentSocket.emit("game:start", {
-          gameId: game.id,
-          fen: gameService.fen,
-          clock: gameService.clock,
-          timeControl,
-          color: "black",
+          gameId: game.id, fen: gameService.fen, clock: gameService.clock, timeControl, color: "black",
         })
       }
     })
@@ -111,32 +179,12 @@ export function registerGameHandlers(io: Server) {
       game.applyIncrement()
       await game.saveMove(from, to, move.san, promotion)
 
-      const opponentId = userId === game.whiteId ? game.blackId : game.whiteId
-      const opponentSocket = [...io.sockets.sockets.values()].find(
-        (s) => getUserId(s) === opponentId
-      )
-
       const movePayload = { gameId, move: { from, to, san: move.san, promotion }, fen: game.fen, clock: game.clock }
-
-      socket.emit("game:move", { ...movePayload, color: "white" })
-      opponentSocket?.emit("game:move", { ...movePayload, color: "black" })
+      io.to(gameId).emit("game:move", movePayload)
 
       const result = game.getResult()
       if (result) {
-        game.status = result.result === "1-0" ? "WHITE_WIN" : result.result === "0-1" ? "BLACK_WIN" : "DRAW"
-
-        await prisma.game.update({
-          where: { id: gameId },
-          data: { status: game.status as any, pgn: game.pgn, result: result.result, finishedAt: new Date() },
-        })
-
-        const overPayload = { gameId, result: result.result, reason: result.reason, pgn: game.pgn }
-        socket.emit("game:over", overPayload)
-        opponentSocket?.emit("game:over", overPayload)
-
-        activeGames.delete(gameId)
-        playerGames.delete(game.whiteId)
-        playerGames.delete(game.blackId)
+        await cleanupGame(io, gameId, result.result, result.reason)
       }
     })
 
@@ -146,31 +194,14 @@ export function registerGameHandlers(io: Server) {
 
       const isWhite = userId === game.whiteId
       const result = isWhite ? "0-1" : "1-0"
-      const status = isWhite ? "BLACK_WIN" : "WHITE_WIN"
-
-      await prisma.game.update({
-        where: { id: gameId },
-        data: { status, pgn: game.pgn, result, finishedAt: new Date() },
-      })
-
-      const opponentId = game.whiteId === userId ? game.blackId : game.whiteId
-      const opponentSocket = [...io.sockets.sockets.values()].find((s) => getUserId(s) === opponentId)
-
-      const payload = { gameId, result, reason: "Desistência", pgn: game.pgn }
-      socket.emit("game:over", payload)
-      opponentSocket?.emit("game:over", payload)
-
-      activeGames.delete(gameId)
-      playerGames.delete(game.whiteId)
-      playerGames.delete(game.blackId)
+      await cleanupGame(io, gameId, result, "Desistência")
     })
 
     socket.on("game:draw-offer", async ({ gameId }) => {
       const game = activeGames.get(gameId)
       if (!game) return
 
-      const opponentId = userId === game.whiteId ? game.blackId : game.whiteId
-      const opponentSocket = [...io.sockets.sockets.values()].find((s) => getUserId(s) === opponentId)
+      const opponentSocket = findOpponentSocket(io, game, userId)
       opponentSocket?.emit("game:draw-offer", { from: userId })
     })
 
@@ -184,22 +215,7 @@ export function registerGameHandlers(io: Server) {
       const game = activeGames.get(gameId)
       if (!game) return
 
-      game.status = "DRAW"
-      await prisma.game.update({
-        where: { id: gameId },
-        data: { status: "DRAW", pgn: game.pgn, result: "½-½", finishedAt: new Date() },
-      })
-
-      const opponentId = userId === game.whiteId ? game.blackId : game.whiteId
-      const opponentSocket = [...io.sockets.sockets.values()].find((s) => getUserId(s) === opponentId)
-
-      const payload = { gameId, result: "½-½", reason: "Empate acordado", pgn: game.pgn }
-      socket.emit("game:over", payload)
-      opponentSocket?.emit("game:over", payload)
-
-      activeGames.delete(gameId)
-      playerGames.delete(game.whiteId)
-      playerGames.delete(game.blackId)
+      await cleanupGame(io, gameId, "½-½", "Empate acordado")
     })
 
     socket.on("game:create-room", async ({ timeControl }) => {
@@ -228,6 +244,9 @@ export function registerGameHandlers(io: Server) {
       playerGames.set(creatorId, game.id)
       playerGames.set(userId, game.id)
 
+      socket.join(game.id)
+      creatorSocket.join(game.id)
+
       await prisma.game.update({
         where: { id: game.id },
         data: { status: "ACTIVE", startedAt: new Date() },
@@ -242,7 +261,32 @@ export function registerGameHandlers(io: Server) {
     })
 
     socket.on("disconnect", async () => {
+      console.log(`Socket disconnected: ${socket.id} (user: ${userId})`)
+
       await leaveQueue(socket.id)
+
+      const gameId = playerGames.get(userId)
+      if (!gameId) return
+
+      const game = activeGames.get(gameId)
+      if (!game || game.status !== "ACTIVE") {
+        playerGames.delete(userId)
+        return
+      }
+
+      const opponentSocket = findOpponentSocket(io, game, userId)
+      opponentSocket?.emit("game:opponent-disconnected", { timeLeft: 30 })
+
+      const timer = setTimeout(async () => {
+        const gameStillActive = activeGames.get(gameId)
+        if (!gameStillActive) return
+
+        const result = userId === gameStillActive.whiteId ? "0-1" : "1-0"
+        await cleanupGame(io, gameId, result, "Tempo de reconexão esgotado")
+        disconnectTimers.delete(userId)
+      }, 30000)
+
+      disconnectTimers.set(userId, timer)
     })
   })
 }

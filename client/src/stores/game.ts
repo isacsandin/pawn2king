@@ -24,6 +24,7 @@ export interface GameState {
   validMoves: string[]
   lastMove: [string, string] | null
   opponent: { id: string; nickname: string } | null
+  opponentStatus: "connected" | "disconnected"
   drawOffered: boolean
   roomCode: string | null
 
@@ -64,6 +65,7 @@ export const useGameStore = create<GameState>((set, get) => {
       validMoves: [],
       lastMove: null,
       opponent: data.opponent || null,
+      opponentStatus: "connected",
       drawOffered: false,
     })
   })
@@ -101,6 +103,14 @@ export const useGameStore = create<GameState>((set, get) => {
     set({ roomCode: data.roomCode })
   })
 
+  socket.on("game:opponent-disconnected", () => {
+    set({ opponentStatus: "disconnected" })
+  })
+
+  socket.on("game:opponent-reconnected", () => {
+    set({ opponentStatus: "connected" })
+  })
+
   return {
     gameId: null,
     color: null,
@@ -116,6 +126,7 @@ export const useGameStore = create<GameState>((set, get) => {
     validMoves: [],
     lastMove: null,
     opponent: null,
+    opponentStatus: "connected",
     drawOffered: false,
     roomCode: null,
 

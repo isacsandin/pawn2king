@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GameStatus {
+  WAITING
+  ACTIVE
+  ABORTED
+  WHITE_WIN
+  BLACK_WIN
+  DRAW
+  STALEMATE
+  TIME_WHITE
+  TIME_BLACK
+}
+
+enum TimeControl {
+  BLITZ_3_0
+  BLITZ_5_0
+  RAPID_10_0
+  RAPID_15_10
+  CLASSIC_30_0
+}
+
+model User {
+  id        String   @id @default(uuid())
+  nickname  String   @unique
+  email     String   @unique
+  password  String
+  rating    Int      @default(1200)
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  gamesAsWhite Game[] @relation("WhitePlayer")
+  gamesAsBlack Game[] @relation("BlackPlayer")
+}
+
+model Guest {
+  id        String   @id @default(uuid())
+  nickname  String
+  token     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model Game {
+  id           String      @id @default(uuid())
+  whiteId      String?
+  blackId      String?
+  white        User?       @relation("WhitePlayer", fields: [whiteId], references: [id])
+  black        User?       @relation("BlackPlayer", fields: [blackId], references: [id])
+  whiteRating  Int?
+  blackRating  Int?
+  status       GameStatus  @default(WAITING)
+  timeControl  TimeControl
+  pgn          String?
+  result       String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime    @default(now())
+
+  moves    Move[]
+  roomCode String?  @unique
+}
+
+model Move {
+  id         String   @id @default(uuid())
+  gameId     String
+  game       Game     @relation(fields: [gameId], references: [id])
+  moveNumber Int
+  from       String
+  to         String
+  promotion  String?
+  fen        String
+  san        String
+  clockWhite Int?
+  clockBlack Int?
+  createdAt  DateTime @default(now())
+}

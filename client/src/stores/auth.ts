@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import type { User } from "../types/auth"
 import { api } from "../services/api"
+import { updateSocketAuth } from "../services/socket"
 
 interface AuthState {
   user: User | null
@@ -22,23 +23,27 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (email, password) => {
     const { token, user } = await api.login({ email, password })
     localStorage.setItem("token", token)
+    updateSocketAuth()
     set({ token, user })
   },
 
   register: async (nickname, email, password) => {
     const { token, user } = await api.register({ nickname, email, password })
     localStorage.setItem("token", token)
+    updateSocketAuth()
     set({ token, user })
   },
 
   loginAsGuest: async (nickname) => {
     const { token, guest } = await api.guest({ nickname })
     localStorage.setItem("token", token)
+    updateSocketAuth()
     set({ token, user: { ...guest, rating: null } })
   },
 
   logout: () => {
     localStorage.removeItem("token")
+    updateSocketAuth()
     set({ token: null, user: null })
   },
 

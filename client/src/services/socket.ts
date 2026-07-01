@@ -4,7 +4,9 @@ let socket: Socket | null = null
 
 export function getSocket(): Socket {
   if (!socket) {
+    const token = localStorage.getItem("token")
     socket = io({
+      auth: { token },
       autoConnect: false,
       transports: ["websocket", "polling"],
     })
@@ -19,4 +21,12 @@ export function connectSocket() {
 
 export function disconnectSocket() {
   if (socket?.connected) socket.disconnect()
+}
+
+export function updateSocketAuth() {
+  const token = localStorage.getItem("token")
+  if (socket) {
+    socket.auth = { token }
+    if (socket.connected) socket.disconnect().connect()
+  }
 }

@@ -4,7 +4,7 @@ import http from "http"
 import cors from "cors"
 import helmet from "helmet"
 import { Server } from "socket.io"
-import { authMiddleware } from "./middleware/auth"
+import { authMiddleware, socketAuthMiddleware } from "./middleware/auth"
 import authRoutes from "./routes/auth"
 import gamesRoutes from "./routes/games"
 import { registerGameHandlers } from "./sockets/gameHandler"
@@ -14,6 +14,8 @@ const server = http.createServer(app)
 const io = new Server(server, {
   cors: { origin: process.env.CLIENT_URL || "http://localhost:5173" },
 })
+
+io.use(socketAuthMiddleware)
 
 app.use(cors())
 app.use(helmet())

@@ -136,30 +136,51 @@ export const useGameStore = create<GameState>((set, get) => {
       const state = get()
       if (state.status !== "playing" || !state.color) return
 
-      if (state.selectedSquare === null) {
-        const chess = new Chess(state.fen)
-        const rawMoves = chess.moves({ square: square as any, verbose: true }) as any[]
-        if (rawMoves.length === 0) return
+      try {
+        if (state.selectedSquare === null) {
+          const chess = new Chess(state.fen)
+          const rawMoves = chess.moves({ square: square as any, verbose: true }) as any[]
+          if (rawMoves.length === 0) return
 
-        const isMyPiece = state.color === "white"
-          ? rawMoves[0].color === "w"
-          : rawMoves[0].color === "b"
-        if (!isMyPiece) return
+          const isMyPiece = state.color === "white"
+            ? rawMoves[0].color === "w"
+            : rawMoves[0].color === "b"
+          if (!isMyPiece) return
 
-        set({
-          selectedSquare: square,
-          validMoves: rawMoves.map((m: any) => m.to),
-        })
-        return
-      }
+          set({
+            selectedSquare: square,
+            validMoves: rawMoves.map((m: any) => m.to),
+          })
+          return
+        }
 
-      if (state.selectedSquare === square) {
+        if (state.selectedSquare === square) {
+          set({ selectedSquare: null, validMoves: [] })
+          return
+        }
+
+        if (!state.validMoves.includes(square)) {
+          const chess = new Chess(state.fen)
+          const clickMoves = chess.moves({ square: square as any, verbose: true }) as any[]
+          if (clickMoves.length > 0) {
+            const isMyPiece = state.color === "white"
+              ? clickMoves[0].color === "w"
+              : clickMoves[0].color === "b"
+            if (isMyPiece) {
+              set({ selectedSquare: square, validMoves: clickMoves.map((m: any) => m.to) })
+              return
+            }
+          }
+          set({ selectedSquare: null, validMoves: [] })
+          return
+        }
+
+        socket.emit("game:move", { gameId: state.gameId, from: state.selectedSquare, to: square })
         set({ selectedSquare: null, validMoves: [] })
-        return
+      } catch (err) {
+        console.error("selectSquare error:", err)
+        set({ selectedSquare: null, validMoves: [] })
       }
-
-      socket.emit("game:move", { gameId: state.gameId, from: state.selectedSquare, to: square })
-      set({ selectedSquare: null, validMoves: [] })
     },
 
     resign: () => {

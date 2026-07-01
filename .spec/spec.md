@@ -21,7 +21,7 @@ Plataforma web focada em partidas casuais de xadrez. Sem cadastro obrigatório p
 | **Backend** | Node.js + TypeScript + Express | Node 22 |
 | **Tempo real** | Socket.IO | v4 |
 | **Validação de xadrez** | chess.js (server-authoritative) | - |
-| **Análise** | Stockfish WASM (client-side) | - |
+| **Análise** | Material graph (atual) / Stockfish WASM (planejado) | - |
 | **ORM** | Prisma | - |
 | **Banco principal** | PostgreSQL 16 (Docker) | - |
 | **Cache / Sessão / Fila** | Redis 7 (Docker) | - |
@@ -149,22 +149,23 @@ Plataforma web focada em partidas casuais de xadrez. Sem cadastro obrigatório p
 
 ### 4.6 Histórico
 
-| ID | Requisito | Prioridade |
-|---|---|---|
-| RF37 | Lista paginada de partidas anteriores | Alta |
-| RF38 | Filtros por resultado (vitória, derrota, empate) | Média |
-| RF39 | Exportar partida em formato PGN | Alta |
-| RF40 | Visualizar detalhes da partida (oponente, data, controle de tempo) | Alta |
+| ID | Requisito | Prioridade | Status |
+|---|---|---|---|
+| RF37 | Lista paginada de partidas anteriores | Alta | ✅ |
+| RF38 | Filtros por resultado (vitória, derrota, empate) | Média | 📅 |
+| RF39 | Exportar partida em formato PGN | Alta | ✅ |
+| RF40 | Visualizar detalhes da partida (oponente, data, controle de tempo) | Alta | ✅ |
 
 ### 4.7 Replay e Análise Pós-Partida
 
-| ID | Requisito | Prioridade |
-|---|---|---|
-| RF41 | Navegação jogada-a-jogada (anterior/próximo/início/fim) | Alta |
-| RF42 | Tabuleiro sincronizado com o movimento atual | Alta |
-| RF43 | Gráfico de avaliação por movimento (com Stockfish WASM) | Alta |
-| RF44 | Destaque da melhor jogada em cada posição | Média |
-| RF45 | Indicador de erro/impressão (blunders, mistakes, inaccuracies) | Baixa |
+| ID | Requisito | Prioridade | Status |
+|---|---|---|---|
+| RF41 | Navegação jogada-a-jogada (anterior/próximo/início/fim) | Alta | ✅ |
+| RF42 | Tabuleiro sincronizado com o movimento atual | Alta | ✅ |
+| RF43 | Gráfico de material (diferença de peças por movimento) | Alta | ✅ |
+| RF43b | Gráfico de avaliação com Stockfish WASM (substitui material graph) | Alta | 📅 Planejado |
+| RF44 | Destaque da melhor jogada em cada posição | Média | 📅 Planejado |
+| RF45 | Indicador de erro/impressão (blunders, mistakes, inaccuracies) | Baixa | 📅 Planejado |
 
 ---
 
@@ -176,7 +177,7 @@ Plataforma web focada em partidas casuais de xadrez. Sem cadastro obrigatório p
 | RNF02 | Latência | Movimentos refletidos em < 200ms (ideal < 100ms) |
 | RNF03 | Consistência | Servidor é autoridade final — cliente nunca confia em si mesmo |
 | RNF04 | Segurança | Senhas hash com bcrypt, JWT com expiração, validação de inputs |
-| RNF05 | Disponibilidade | Sistema tolerante a desconexões: reconexão automática via Socket.IO |
+| RNF05 | Disponibilidade | Sistema tolerante a desconexões: reconexão automática via Socket.IO com timeout de 30s |
 | RNF06 | Acessibilidade | Tabuleiro navegável por teclado, contraste adequado |
 | RNF07 | Performance | Stockfish WASM roda em Web Worker para não travar a UI |
 
@@ -268,12 +269,8 @@ model Move {
 ### 6.2 Redis (Dados temporários)
 
 ```json
-// Matchmaking Queue
-queue:player:{userId} => { rating, timeControl, joinedAt }
-
-// Active Game Sessions
-game:{gameId}:state => { fen, pgn, turn, clocks, status }
-game:{gameId}:players => [socketIdWhite, socketIdBlack]
+// Matchmaking Queue (Sorted Set por timeControl)
+queue:{timeControl} => score: timestamp, member: { socketId, userId, rating }
 
 // Guest Sessions
 guest:{token} => { nickname, expiresAt }
@@ -337,7 +334,7 @@ Auth: { token: string } (opcional para convidados)
 |---|---|---|
 | `matchmaking:queue-update` | `{ position, estimatedWait }` | Atualização da fila |
 | `matchmaking:found` | `{ gameId, opponent, color, timeControl }` | Oponente encontrado |
-| `game:start` | `{ gameId, fen, white, black, clock, timeControl }` | Partida iniciada |
+| `game:start` | `{ gameId, fen, clock, timeControl, color, resumed? }` | Partida iniciada (ou reconectada) |
 | `game:move` | `{ gameId, move, fen, clock, status? }` | Movimento validado |
 | `game:over` | `{ gameId, result, reason, pgn }` | Partida encerrada |
 | `game:error` | `{ message, code }` | Erro (movimento inválido, etc.) |
@@ -402,16 +399,18 @@ Jogador A               Servidor               Jogador B
    │                        │                        │
    │── (desconecta) ───────►│                        │
    │                        ├── inicia timer de      │
-   │                        │    reconexão (60s)     │
+   │                        │    reconexão (30s)     │
    │                        ├── notifica oponente    │
    │                        │                        │
    │◄── game:opponent-discon│── game:opp-discon ────►│
    │                        │                        │
    │── (reconecta) ────────►│                        │
    │                        ├── reassocia socket     │
+   │                        ├── reenvia estado via   │
+   │                        │    game:start (resumed)│
    │◄── game:opponent-recon │── game:opp-recon ─────►│
    │                        │                        │
-   │  (ou após 60s)         │                        │
+   │  (ou após 30s)         │                        │
    │                        ├── declara vitória do   │
    │                        │    oponente por WO     │
    │                        ├── game:over ──────────►│
@@ -472,23 +471,25 @@ Jogador A               Servidor               Jogador B
 ### 11.7 Análise / Replay
 - Tabuleiro com navegação (◀ ▶ ⏮ ⏭)
 - Notação dos movimentos sincronizada
-- Gráfico de avaliação (centipawn loss por movimento)
+- Gráfico de material (diferença de peças por movimento) — atual
+- Gráfico de avaliação com Stockfish WASM (centipawn loss) — planejado
 - Indicador visual de melhor jogada (opcional)
 
 ---
 
 ## 12. Plano de Implementação
 
-| Fase | Tarefas | Dependências |
-|---|---|---|
-| **0 — Setup** | Docker Compose (PostgreSQL + Redis), projeto React + Express, Prisma schema, migração inicial | Nenhuma |
-| **1 — Autenticação** | Registro, login, JWT, middleware, guest mode | Fase 0 |
-| **2 — Tabuleiro** | Componente ChessBoard, interação drag/click, destaques | Fase 0 |
-| **3 — Partidas** | Serviço de jogo com chess.js, socket.IO, salas, relógio | Fase 1, 2 |
-| **4 — Lobby + Matchmaking** | Fila Redis, criação de salas, matchmaking por rating | Fase 3 |
-| **5 — Persistência** | Salvar Game + Moves, histórico, exportar PGN | Fase 3 |
-| **6 — Análise** | Replay, gráfico de avaliação, Stockfish WASM | Fase 5 |
-| **7 — Polimento** | Responsivo, loading states, toasts, sons, teclado | Fase 6 |
+| Fase | Tarefas | Status |
+|---|---|---|---|
+| **0 — Setup** | Docker Compose (PostgreSQL + Redis), projeto React + Express, Prisma schema, migração inicial | ✅ |
+| **1 — Autenticação** | Registro, login, JWT, middleware, guest mode | ✅ |
+| **2 — Tabuleiro** | Componente ChessBoard, interação drag/click, destaques, SVGs sólidos | ✅ |
+| **3 — Partidas** | Serviço de jogo com chess.js, Socket.IO, salas, relógio, cleanup/reconexão | ✅ |
+| **4 — Lobby + Matchmaking** | Fila Redis (sorted sets), criação de salas, matchmaking por rating | ✅ |
+| **5 — Persistência** | Salvar Game + Moves, histórico paginado, exportar PGN | ✅ |
+| **6 — Análise** | Replay, navegação jogada-a-jogada, gráfico de material | ✅ |
+| **6b — Análise Avançada** | Stockfish WASM, gráfico de avaliação, best move, detecção de erros | 📅 |
+| **7 — Polimento** | Responsivo, loading states, toasts, sons, teclado | 📅 |
 
 ---
 
@@ -532,3 +533,38 @@ pawn2king/
 │   └── tailwind.config.js
 └── README.md
 ```
+
+---
+
+## 14. Notas de Implementação
+
+### 14.1 Prisma Client
+- Gerado em `server/src/generated/prisma/` (caminho customizado no `prisma.schema`)
+- Import: `from "../generated/prisma/client"`
+
+### 14.2 Socket.IO Rooms
+- Cada partida usa `socket.join(gameId)` para isolar eventos
+- Broadcast de movimentos e `game:over` via `io.to(gameId).emit()`
+- `game:start` é enviado individualmente a cada jogador (contém `color` específica)
+
+### 14.3 Cleanup de Partidas
+- `cleanupGame()` centraliza: persistência no banco, remoção de `activeGames`/`playerGames`, limpeza de timers de reconexão, remoção de salas
+- Chamada em: `game:move` (fim), `game:resign`, `game:draw-response` (aceito), timeout de desconexão
+
+### 14.4 Reconexão
+- Ao conectar, verifica se o usuário tem partida ativa em `playerGames`
+- Se sim e a partida está `ACTIVE`, reenvia `game:start` com `resumed: true`
+- Cancela o timer de desconexão se existir
+
+### 14.5 Comportamento do Tabuleiro
+- `selectSquare` com try/catch para segurança
+- Clique em outra peça própria troca a seleção (não requer desselecionar primeiro)
+- Drag-and-drop e clique funcionam em paralelo
+
+### 14.6 Modo Convidado
+- Se `nickname` não for enviado, o servidor gera automaticamente (ex: "Convidado#XXXX")
+- Token JWT com expiração de 24h
+
+### 14.7 Frontend na Rede Local
+- Vite configurado com `host: "0.0.0.0"` para acesso de outros dispositivos na LAN
+- Proxy do Vite para `/api` e `/socket.io` aponta para `localhost:3001`

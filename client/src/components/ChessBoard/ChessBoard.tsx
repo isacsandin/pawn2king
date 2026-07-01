@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react"
-import { getPieceChar, FILES, RANKS } from "./pieces"
+import { getPieceSvg } from "./Piece"
+import { FILES, RANKS } from "./pieces"
 
 interface ChessBoardProps {
   fen: string
@@ -122,8 +123,7 @@ export function ChessBoard({
               onDragOver={handleDragOver}
               className={`
                 w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16
-                flex items-center justify-center
-                text-3xl sm:text-4xl leading-none
+                flex items-center justify-center p-1
                 transition-colors relative cursor-pointer
                 ${isLight ? "bg-amber-100" : "bg-amber-700"}
                 ${isSelected(fileIdx, rankIdx) ? "ring-2 ring-amber-300 ring-inset" : ""}
@@ -145,11 +145,15 @@ export function ChessBoard({
                   draggable
                   onDragStart={(e) => handleDragStart(e, sq)}
                   onDragEnd={handleDragEnd}
-                  className={`pointer-events-auto cursor-grab active:cursor-grabbing ${
+                  className={`pointer-events-auto cursor-grab active:cursor-grabbing flex items-center justify-center w-full h-full ${
                     isDragging ? "opacity-40" : ""
-                  } ${piece === piece.toUpperCase() ? "drop-shadow-[0_1px_1px_rgba(0,0,0,0.3)]" : ""}`}
+                  } ${
+                    piece === piece.toUpperCase()
+                      ? "drop-shadow-[0_2px_2px_rgba(0,0,0,0.2)]"
+                      : ""
+                  }`}
                 >
-                  {getPieceChar(piece)}
+                  {getPieceSvg(piece)}
                 </span>
               )}
             </div>

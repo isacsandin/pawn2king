@@ -3,6 +3,7 @@ import { useGameStore } from "../stores/game"
 import { ChessBoard } from "../components/ChessBoard"
 import { Clock } from "../components/Clock"
 import { MoveList } from "../components/MoveList"
+import { getPieceSvg } from "../components/ChessBoard/Piece"
 
 interface GamePageProps {
   onBack: () => void
@@ -11,8 +12,8 @@ interface GamePageProps {
 export function GamePage({ onBack }: GamePageProps) {
   const {
     fen, color, clock, status, moves, selectedSquare, validMoves,
-    lastMove, opponent, drawOffered, result, reason,
-    selectSquare, resign, offerDraw, respondDraw, reset,
+    lastMove, opponent, drawOffered, result, reason, pendingPromotion,
+    selectSquare, selectPromotion, resign, offerDraw, respondDraw, reset,
   } = useGameStore()
 
   const [localClock, setLocalClock] = useState(clock)
@@ -67,6 +68,28 @@ export function GamePage({ onBack }: GamePageProps) {
             <div className="flex gap-3 justify-center">
               <button onClick={() => respondDraw(true)} className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg">Aceitar</button>
               <button onClick={() => respondDraw(false)} className="px-6 py-2 bg-red-600 hover:bg-red-500 rounded-lg">Recusar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingPromotion && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-zinc-800 rounded-xl p-6 text-center">
+            <p className="mb-4 text-zinc-200">Promoção de peão</p>
+            <div className="flex gap-3 justify-center">
+              {["q", "r", "b", "n"].map((piece) => {
+                const p = color === "white" ? piece.toUpperCase() : piece
+                return (
+                  <button
+                    key={piece}
+                    onClick={() => selectPromotion(p)}
+                    className="w-16 h-16 bg-zinc-700 hover:bg-zinc-600 rounded-lg flex items-center justify-center transition-colors"
+                  >
+                    <span className="w-12 h-12">{getPieceSvg(p)}</span>
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>

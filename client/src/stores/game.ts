@@ -9,6 +9,11 @@ export interface MoveInfo {
   promotion?: string
 }
 
+export interface PendingPromotion {
+  from: string
+  to: string
+}
+
 export interface GameState {
   gameId: string | null
   color: "white" | "black" | null
@@ -27,10 +32,12 @@ export interface GameState {
   opponentStatus: "connected" | "disconnected"
   drawOffered: boolean
   roomCode: string | null
+  pendingPromotion: PendingPromotion | null
 
   joinMatchmaking: (timeControl: string) => void
   leaveMatchmaking: () => void
   selectSquare: (square: string) => void
+  selectPromotion: (piece: string) => void
   resign: () => void
   offerDraw: () => void
   respondDraw: (accept: boolean) => void
@@ -67,6 +74,7 @@ export const useGameStore = create<GameState>((set, get) => {
       opponent: data.opponent || null,
       opponentStatus: "connected",
       drawOffered: false,
+      pendingPromotion: null,
     })
   })
 
@@ -79,11 +87,12 @@ export const useGameStore = create<GameState>((set, get) => {
       lastMove: [data.move.from, data.move.to] as [string, string],
       selectedSquare: null,
       validMoves: [],
+      pendingPromotion: null,
     })
   })
 
   socket.on("game:over", (data) => {
-    set({ status: "over", result: data.result, reason: data.reason, pgn: data.pgn })
+    set({ status: "over", result: data.result, reason: data.reason, pgn: data.pgn, pendingPromotion: null })
   })
 
   socket.on("game:error", (data) => {
@@ -129,6 +138,7 @@ export const useGameStore = create<GameState>((set, get) => {
     opponentStatus: "connected",
     drawOffered: false,
     roomCode: null,
+    pendingPromotion: null,
 
     setOpponent: (opponent) => set({ opponent }),
 
@@ -186,12 +196,30 @@ export const useGameStore = create<GameState>((set, get) => {
           return
         }
 
-        socket.emit("game:move", { gameId: state.gameId, from: state.selectedSquare, to: square })
+        const from = state.selectedSquare
+        const to = square
+
+        const chess = new Chess(state.fen)
+        const piece = chess.get(from as any)
+        if (piece && piece.type === "p" && (to[1] === "8" || to[1] === "1")) {
+          set({ pendingPromotion: { from, to }, selectedSquare: null, validMoves: [] })
+          return
+        }
+
+        socket.emit("game:move", { gameId: state.gameId, from, to })
         set({ selectedSquare: null, validMoves: [] })
       } catch (err) {
         console.error("selectSquare error:", err)
         set({ selectedSquare: null, validMoves: [] })
       }
+    },
+
+    selectPromotion: (piece) => {
+      const state = get()
+      if (!state.pendingPromotion) return
+      const { from, to } = state.pendingPromotion
+      socket.emit("game:move", { gameId: state.gameId, from, to, promotion: piece })
+      set({ pendingPromotion: null, selectedSquare: null, validMoves: [] })
     },
 
     resign: () => {
@@ -222,7 +250,7 @@ export const useGameStore = create<GameState>((set, get) => {
         gameId: null, color: null, status: "idle", fen: INITIAL_FEN,
         clock: { white: 0, black: 0 }, moves: [], result: null, reason: null,
         roomCode: null, drawOffered: false, selectedSquare: null, validMoves: [],
-        lastMove: null, opponent: null,
+        lastMove: null, opponent: null, pendingPromotion: null,
       })
     },
   }

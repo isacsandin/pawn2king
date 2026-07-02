@@ -22,11 +22,11 @@ Sistema web para partidas casuais de xadrez 1v1 em tempo real. Oferece matchmaki
 - Docker Desktop (ou Docker Compose standalone)
 - NPM
 
-## Setup
+## Setup (Local)
 
 ```bash
 # 1. Subir PostgreSQL e Redis
-docker compose up -d
+docker compose up -d postgres redis
 
 # 2. Instalar dependências do servidor
 cd server
@@ -41,14 +41,9 @@ npx prisma generate
 # 5. Instalar dependências do cliente
 cd ../client
 npm install
-
-# 6. (Opcional) Gerar .env do servidor
-#    O arquivo server/.env já existe com valores padrão de desenvolvimento:
-#    DATABASE_URL="postgresql://pawn2king:pawn2king_dev@localhost:5432/pawn2king?schema=public"
-#    JWT_SECRET="pawn2king-dev-secret-key-change-in-production"
 ```
 
-## Executar
+## Executar (Local)
 
 Em dois terminais separados:
 
@@ -63,6 +58,18 @@ npm run dev
 ```
 
 O cliente Vite faz proxy de `/api` e `/socket.io` para o servidor. Para acessar de outras máquinas na rede, use o IP da máquina (ex: `http://192.168.x.x:5173`).
+
+## Executar (Tudo em Docker)
+
+```bash
+# 1. Build e iniciar todos os serviços
+docker compose up --build
+
+# 2. Rodar migrations (primeira vez ou após alterações no schema)
+docker compose exec server npx prisma migrate dev
+```
+
+Acesse em `http://localhost:5173`. O backend roda em `http://localhost:3001`. Alterações no código são refletidas automaticamente (hot-reload com volumes montados).
 
 ## Scripts
 
@@ -100,7 +107,7 @@ O cliente Vite faz proxy de `/api` e `/socket.io` para o servidor. Para acessar 
 ```
 pawn2king/
 ├── .spec/spec.md       # Especificação completa do sistema
-├── docker-compose.yml  # PostgreSQL 16 + Redis 7
+├── docker-compose.yml  # PostgreSQL, Redis, Server, Client
 ├── server/
 │   ├── src/
 │   │   ├── index.ts           # Entrypoint (Express + Socket.IO)

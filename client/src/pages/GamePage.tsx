@@ -16,22 +16,26 @@ export function GamePage({ onBack }: GamePageProps) {
     selectSquare, selectPromotion, resign, offerDraw, respondDraw, reset,
   } = useGameStore()
 
-  const [localClock, setLocalClock] = useState(clock)
+  const isWhiteTurn = fen.split(" ")[1] === "w"
 
-  useEffect(() => {
-    setLocalClock(clock)
-  }, [clock])
+  const [localClock, setLocalClock] = useState(clock)
 
   useEffect(() => {
     if (status !== "playing") return
     const interval = setInterval(() => {
-      setLocalClock((prev) => ({
-        white: Math.max(0, prev.white - 100),
-        black: Math.max(0, prev.black - 100),
-      }))
+      setLocalClock((prev) => {
+        const s = useGameStore.getState()
+        const turn = s.fen.split(" ")[1]
+        if (turn === "w") return { white: Math.max(0, prev.white - 100), black: prev.black }
+        return { white: prev.white, black: Math.max(0, prev.black - 100) }
+      })
     }, 100)
     return () => clearInterval(interval)
   }, [status])
+
+  useEffect(() => {
+    if (status === "playing" && moves.length === 0) setLocalClock(clock)
+  }, [clock.white, clock.black])
 
   const myClock = color === "white" ? localClock.white : localClock.black
   const oppClock = color === "white" ? localClock.black : localClock.white
@@ -78,15 +82,15 @@ export function GamePage({ onBack }: GamePageProps) {
           <div className="bg-zinc-800 rounded-xl p-6 text-center">
             <p className="mb-4 text-zinc-200">Promoção de peão</p>
             <div className="flex gap-3 justify-center">
-              {["q", "r", "b", "n"].map((piece) => {
-                const p = color === "white" ? piece.toUpperCase() : piece
+              {(["q", "r", "b", "n"] as const).map((piece) => {
+                const display = color === "white" ? piece.toUpperCase() : piece
                 return (
                   <button
                     key={piece}
-                    onClick={() => selectPromotion(p)}
+                    onClick={() => selectPromotion(piece)}
                     className="w-16 h-16 bg-zinc-700 hover:bg-zinc-600 rounded-lg flex items-center justify-center transition-colors"
                   >
-                    <span className="w-12 h-12">{getPieceSvg(p)}</span>
+                    <span className="w-12 h-12">{getPieceSvg(display)}</span>
                   </button>
                 )
               })}
@@ -105,7 +109,7 @@ export function GamePage({ onBack }: GamePageProps) {
 
       <div className="flex flex-col lg:flex-row items-center justify-center gap-6">
         <div className="flex flex-col items-center gap-2">
-          <Clock time={oppClock} label={color === "white" ? "Pretas" : "Brancas"} active={color !== "white"} />
+          <Clock time={oppClock} label={color === "white" ? "Pretas" : "Brancas"} active={color === "white" ? !isWhiteTurn : isWhiteTurn} />
           <ChessBoard
             fen={fen}
             orientation={color || "white"}
@@ -114,7 +118,7 @@ export function GamePage({ onBack }: GamePageProps) {
             lastMove={lastMove}
             onSquareClick={selectSquare}
           />
-          <Clock time={myClock} label={color === "white" ? "Brancas" : "Pretas"} active={color === "white"} />
+          <Clock time={myClock} label={color === "white" ? "Brancas" : "Pretas"} active={color === "white" ? isWhiteTurn : !isWhiteTurn} />
         </div>
 
         <div className="w-full lg:w-64 space-y-3">

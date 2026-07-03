@@ -97,7 +97,7 @@ export const useGameStore = create<GameState>((set, get) => {
 
   socket.on("game:error", (data) => {
     console.error("Game error:", data.message)
-    set({ selectedSquare: null, validMoves: [] })
+    set({ selectedSquare: null, validMoves: [], pendingPromotion: null })
   })
 
   socket.on("game:draw-offer", () => {

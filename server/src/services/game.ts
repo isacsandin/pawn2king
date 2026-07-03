@@ -53,8 +53,12 @@ export class GameService {
   }
 
   makeMove(from: string, to: string, promotion?: string) {
-    const move = this.chess.move({ from, to, promotion })
-    if (!move) return null
+    let move
+    try {
+      move = this.chess.move({ from, to, promotion })
+    } catch {
+      return null
+    }
     return move
   }
 
@@ -92,8 +96,8 @@ export class GameService {
     return null
   }
 
-  applyIncrement() {
-    if (this.turnColor === "w") {
+  applyIncrement(color: string) {
+    if (color === "w") {
       this.clock.white += this.clock.increment
     } else {
       this.clock.black += this.clock.increment

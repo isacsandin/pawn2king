@@ -168,6 +168,7 @@ export function registerGameHandlers(io: Server) {
       if (!game) return socket.emit("game:error", { message: "Partida não encontrada" })
 
       if (!game.isPlayerTurn(userId)) {
+        console.log(`Turn check failed: userId=${userId}, whiteId=${game.whiteId}, blackId=${game.blackId}, turnColor=${game.turnColor}, status=${game.status}`)
         return socket.emit("game:error", { message: "Não é seu turno" })
       }
 
@@ -176,7 +177,7 @@ export function registerGameHandlers(io: Server) {
         return socket.emit("game:error", { message: "Movimento inválido" })
       }
 
-      game.applyIncrement()
+      game.applyIncrement(move.color)
       await game.saveMove(from, to, move.san, promotion)
 
       const movePayload = { gameId, move: { from, to, san: move.san, promotion }, fen: game.fen, clock: game.clock }
